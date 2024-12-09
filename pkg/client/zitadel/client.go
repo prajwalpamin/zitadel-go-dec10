@@ -2,6 +2,7 @@ package zitadel
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"strings"
 
@@ -17,6 +18,7 @@ type Connection struct {
 	jwtProfileTokenSource middleware.JWTProfileTokenSource
 	scopes                []string
 	orgID                 string
+	skipHostVerify        bool
 	insecure              bool
 	unaryInterceptors     []grpc.UnaryClientInterceptor
 	streamInterceptors    []grpc.StreamClientInterceptor
@@ -51,7 +53,7 @@ func NewConnection(ctx context.Context, issuer, api string, scopes []string, opt
 		),
 	}
 	dialOptions = append(dialOptions, c.dialOptions...)
-	opt, err := transportOption(c.api, c.insecure)
+	opt, err := transportOption(c.api, c.insecure, c.skipHostVerify)
 	if err != nil {
 		return nil, err
 	}
@@ -81,18 +83,18 @@ func (c *Connection) setInterceptors(issuer, orgID string, scopes []string, jwtP
 	return nil
 }
 
-func transportOption(api string, insecure bool) (grpc.DialOption, error) {
+func transportOption(api string, insecure, skipHostVerify bool) (grpc.DialOption, error) {
 	if insecure {
 		return grpc.WithInsecure(), nil
 	}
-	certs, err := transportCredentials(api)
+	certs, err := transportCredentials(api, skipHostVerify)
 	if err != nil {
 		return nil, err
 	}
 	return grpc.WithTransportCredentials(certs), nil
 }
 
-func transportCredentials(api string) (credentials.TransportCredentials, error) {
+func transportCredentials(api string, skipHostVerify bool) (credentials.TransportCredentials, error) {
 	ca, err := x509.SystemCertPool()
 	if err != nil {
 		return nil, err
@@ -102,7 +104,7 @@ func transportCredentials(api string) (credentials.TransportCredentials, error) 
 	}
 
 	servernameWithoutPort := strings.Split(api, ":")[0]
-	return credentials.NewClientTLSFromCert(ca, servernameWithoutPort), nil
+	return credentials.NewTLS(&tls.Config{ServerName: servernameWithoutPort, RootCAs: ca, InsecureSkipVerify: skipHostVerify}), nil
 }
 
 type Option func(*Connection) error
@@ -139,6 +141,13 @@ func WithOrgID(orgID string) func(*Connection) error {
 func WithInsecure() func(*Connection) error {
 	return func(client *Connection) error {
 		client.insecure = true
+		return nil
+	}
+}
+
+func WithSkipHostVerify() func(*Connection) error {
+	return func(client *Connection) error {
+		client.skipHostVerify = true
 		return nil
 	}
 }
